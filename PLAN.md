@@ -54,12 +54,12 @@ Logging: log dates + field names + success/failure only. Never log token values 
 |---|---|---|
 | daily-resting-heart-rate | restingHR | bpm, int |
 | daily-heart-rate-variability | hrv | RMSSD ms, float |
-| daily-heart-rate-variability (2nd value if present) | avgSleepingHR | NREM restoration HR, only if API returns it. Current sync.py maps hrv only. Verify in first live run, see §6. |
+| daily-heart-rate-variability (2nd value if present) | avgSleepingHR | NREM restoration HR, only if API returns it. Confirmed Nov 13, 2026: Nov 12 returned 58, mapped in sync.py. |
 | sleep (dataPoints) | sleepSecs | seconds, sum sessions ending on wake date. Date the record to wake-up date, not bedtime. |
 | daily-oxygen-saturation | spO2 | % |
 | daily-respiratory-rate | respiration | breaths/min |
 | daily-vo2-max, fallback vo2-max | vo2max | ml/kg/min |
-| steps (dailyRollUp) | steps | count |
+| steps (list, summed in code) | steps | count |
 | weight, body-fat | weight, bodyFat | kg, %. Only if present. Do not add unless Kishan asks. |
 
 What is NOT available: Fitbit Sleep Score is not in the Google Health API. Do not expect `sleepScore`. Do not invent it.
@@ -80,7 +80,7 @@ google-health-intervals-sync/
 
 `sync.py` behaviour to preserve:
 - Refresh Google access token each run from `GOOGLE_REFRESH_TOKEN`.
-- Daily types via `dailyRollUp` with filter `startTime>=<rfc3339> AND endTime<=<rfc3339>`, Vancouver date, -07:00 offset.
+- Daily types via GET list, NOT dailyRollUp. dailyRollUp is POST only and daily types support only list and reconcile. Filter `{snake_type}.date >= "YYYY-MM-DD" AND {snake_type}.date < "next day"`. Sleep via `sleep.interval.civil_end_time` in the same date range. Steps via `steps.interval.start_time` as RFC3339 UTC (Vancouver day = 07:00Z to next day 07:00Z), summed in code, pageSize 2000 with pageToken loop.
 - Sleep via `dataPoints`, sum only sessions ending on wake date.
 - If a day has no Google data, skip it. Do not PUT an empty payload and do not blank Intervals.
 - Intervals PUT with `Authorization: Basic base64(API_KEY:<key>)`, athlete `0`.
@@ -174,9 +174,9 @@ Fallback if custom bridge proves too fragile: Health Sync by appyhapps, iOS, sou
 
 ## 12. Open items for the executing agent (do not block on these)
 
-1. Confirm the exact `dailyRollUp` filter syntax against the live REST reference on the day you run it. If the reference shows a different filter format, update `sync.py` and note the change in the PR/commit message.
-2. Confirm whether `DailyHeartRateVariability` returns a second value for avg sleeping HR in Kishan's live data. If yes, map it to `avgSleepingHR` in `sync.py`. If no, leave hrv only.
-3. Confirm VO2 max actually returns a value for Fitbit Air. Live Apple Health had zero VO2 rows. If Google returns none, leave `vo2max` absent, do not fake it.
+1. RESOLVED Nov 13, 2026: dailyRollUp is not used. Daily types support only list and reconcile, so sync.py uses GET list, see section 5.
+2. RESOLVED Nov 13, 2026: DailyHeartRateVariability does return a second value for avg sleeping HR in Kishan's live data, Nov 12 returned 58, mapped to `avgSleepingHR` in sync.py.
+3. RESOLVED Nov 13, 2026 for Nov 12: Google returned no daily-vo2-max for Fitbit Air, so `vo2max` is left absent, not faked. No other day checked yet.
 4. If GitHub repo creation needs Kishan to select repositories in the Muse GitHub App, ask him to do that step and then continue. Do not disconnect/reconnect GitHub to fix a missing repo.
 
 ---
