@@ -15,8 +15,9 @@ Read `PLAN.md` first. It is the full handoff plan. This README is the short oper
 | daily-respiratory-rate | respiration |
 | daily-vo2-max | vo2max |
 | steps | steps |
+| weight | weight (kg, last sample of the day) |
 
-Wahoo stays the authoritative activity source. Intervals Companion stays on for Apple Health wellness, but it cannot supply HRV. This bridge only writes the fields above. Intervals PUT only changes fields sent, so it will not blank other wellness fields.
+Wahoo stays the authoritative activity source. Intervals Companion is no longer needed for wellness, the bridge now covers weight too. This bridge only writes the fields above. Intervals PUT only changes fields sent, so it will not blank other wellness fields.
 
 ## Quick start
 
