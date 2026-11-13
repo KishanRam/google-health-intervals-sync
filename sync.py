@@ -19,6 +19,7 @@ revision 20261113, and Pulse's live-tested notes, Nov 13 2026):
   daily-respiratory-rate        -> respiration (breaths/min)
   daily-vo2-max                 -> vo2max (ml/kg/min)
   steps (list, summed)          -> steps
+  weight (Sample, weightGrams)  -> weight (kg, grams/1000, last sample of day)
 
 Read method, corrected Nov 13 2026 after a 404 on every type:
   dailyRollUp is NOT a GET endpoint. It is POST
@@ -203,12 +204,35 @@ def get_steps(session, day):
     return total if total > 0 else None
 
 
+def get_weight_kg(session, day):
+    """Last weight sample for one Vancouver day, in kg.
+    Weight is a Sample type: filter on weight.sample_time.physical_time,
+    Vancouver day = 07:00Z to next day 07:00Z. Take the last point."""
+    start = f"{day.isoformat()}T07:00:00Z"
+    end = f"{(day + timedelta(days=1)).isoformat()}T07:00:00Z"
+    filt = (f'weight.sample_time.physical_time >= "{start}" '
+            f'AND weight.sample_time.physical_time < "{end}"')
+    try:
+        data = google_get(session, "/users/me/dataTypes/weight/dataPoints",
+                          params={"filter": filt, "pageSize": 10})
+    except requests.HTTPError as e:
+        log(f"weight {day} failed: {e}")
+        return None
+    points = data.get("dataPoints") or []
+    if not points:
+        return None
+    grams = _num((points[-1].get("weight") or {}).get("weightGrams"))
+    if grams is None:
+        return None
+    return round(grams / 1000.0, 3)
+
+
 def build_payload_for_day(session, day, mock=False):
     if mock:
         return {
             "restingHR": 52, "hrv": 68, "avgSleepingHR": 48,
             "sleepSecs": 25200, "spO2": 97, "respiration": 14.5,
-            "vo2max": 48, "steps": 8200,
+            "vo2max": 48, "steps": 8200, "weight": 73.6,
         }
     payload = {}
     rhr = get_daily_value(session, "daily-resting-heart-rate", day)
@@ -238,6 +262,9 @@ def build_payload_for_day(session, day, mock=False):
     steps = get_steps(session, day)
     if steps is not None:
         payload["steps"] = steps
+    weight = get_weight_kg(session, day)
+    if weight is not None:
+        payload["weight"] = weight
     return payload
 
 
