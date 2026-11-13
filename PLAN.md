@@ -60,6 +60,7 @@ Logging: log dates + field names + success/failure only. Never log token values 
 | daily-respiratory-rate | respiration | breaths/min |
 | daily-vo2-max, fallback vo2-max | vo2max | ml/kg/min |
 | steps (list, summed in code) | steps | count |
+| weight (Sample, weightGrams) | weight | kg, last sample of Vancouver day, grams/1000. Added Nov 13, 2026 at Kishan's ask, so Companion can be deleted. |
 | weight, body-fat | weight, bodyFat | kg, %. Only if present. Do not add unless Kishan asks. |
 
 What is NOT available: Fitbit Sleep Score is not in the Google Health API. Do not expect `sleepScore`. Do not invent it.
