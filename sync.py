@@ -10,16 +10,32 @@ This bridge reads them directly from Google Health API v4 and PUTs
 them to Intervals.icu wellness. Workouts are deliberately NOT synced.
 Wahoo remains the authoritative activity source.
 
-Mapping (verified against giabisson/fitbit-intervals-sync, Nov 13 2026):
+Mapping (verified against live Google Health API v4, discovery
+revision 20261113, and Pulse's live-tested notes, Nov 13 2026):
   daily-resting-heart-rate      -> restingHR (bpm)
   daily-heart-rate-variability  -> hrv (RMSSD, ms) + avgSleepingHR if present
   sleep                         -> sleepSecs, dated to wake-up date
   daily-oxygen-saturation       -> spO2 (%)
   daily-respiratory-rate        -> respiration (breaths/min)
-  daily-vo2-max / vo2-max       -> vo2max (ml/kg/min)
-  steps (dailyRollUp)           -> steps
-  weight / body-fat             -> weight (kg) / bodyFat (%) if present
-  Fitbit Sleep Score is NOT in the Google Health API. Do not expect sleepScore.
+  daily-vo2-max                 -> vo2max (ml/kg/min)
+  steps (list, summed)          -> steps
+
+Read method, corrected Nov 13 2026 after a 404 on every type:
+  dailyRollUp is NOT a GET endpoint. It is POST
+  /users/me/dataTypes/{type}/dataPoints:dailyRollUp, and daily
+  types (daily-resting-heart-rate, daily-heart-rate-variability,
+  daily-oxygen-saturation, daily-respiratory-rate, daily-vo2-max)
+  do NOT support dailyRollUp at all. They support only list and
+  reconcile. So daily types are read with GET
+  /users/me/dataTypes/{type}/dataPoints with a date filter:
+    {snake_type}.date >= "YYYY-MM-DD" AND {snake_type}.date < "YYYY-MM-DD"
+  Sleep (Session) uses:
+    sleep.interval.civil_end_time >= "YYYY-MM-DD" AND sleep.interval.civil_end_time < "YYYY-MM-DD"
+  Steps (Interval) uses list with a physical-time filter and the
+  minute buckets are summed in code. dailyRollUp is not used.
+  Response values live in dataPoints[].{camelType}, e.g.
+  dailyRestingHeartRate.beatsPerMinute (a string), not in a
+  generic "value" array. Numeric-looking fields are often strings.
 
 Auth:
   Google: OAuth2 refresh token (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
@@ -38,6 +54,10 @@ Usage:
   python sync.py [--date YYYY-MM-DD] [--dry-run] [--mock]
   --dry-run prints the payload without PUTing to Intervals.
   --mock uses fake Google data, no credentials needed, for syntax/mapping test.
+  Local real-data test needs env vars exported first, sync.py does
+  not read .env on its own:
+    set -a; source .env; set +a
+    python3 sync.py --dry-run --date 2026-11-12
 """
 import argparse
 import base64
@@ -52,14 +72,13 @@ GOOGLE_BASE = "https://health.googleapis.com/v4"
 INTERVALS_BASE = "https://intervals.icu/api/v1"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 
-# Daily types use dailyRollUp; sleep/steps use dataPoints/dailyRollUp as noted.
-DAILY_TYPES = {
-    "daily-resting-heart-rate": "restingHR",
-    "daily-heart-rate-variability": "hrv",
-    "daily-oxygen-saturation": "spO2",
-    "daily-respiratory-rate": "respiration",
-    "daily-vo2-max": "vo2max",
-    "vo2-max": "vo2max",
+# Daily type -> (camelCase key in DataPoint, field holding the value)
+DAILY_SPECS = {
+    "daily-resting-heart-rate": ("dailyRestingHeartRate", "beatsPerMinute"),
+    "daily-heart-rate-variability": ("dailyHeartRateVariability", "averageHeartRateVariabilityMilliseconds"),
+    "daily-oxygen-saturation": ("dailyOxygenSaturation", "averagePercentage"),
+    "daily-respiratory-rate": ("dailyRespiratoryRate", "breathsPerMinute"),
+    "daily-vo2-max": ("dailyVo2Max", "vo2Max"),
 }
 
 
@@ -89,58 +108,62 @@ def google_get(session, path, params=None):
     return r.json()
 
 
-def _first_fp_value(point):
-    """Return first numeric value from a Google Health data point."""
-    vals = point.get("value") or []
-    for v in vals:
-        if "fpVal" in v:
-            return float(v["fpVal"])
-        if "intVal" in v:
-            return float(v["intVal"])
-    return None
+def _num(v):
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def get_daily_point(session, data_type, day):
+    """GET list for one daily type on one civil date. Returns the nested
+    typed object (e.g. dailyRestingHeartRate dict) or None."""
+    camel, _field = DAILY_SPECS[data_type]
+    snake = data_type.replace("-", "_")
+    nxt = day + timedelta(days=1)
+    filt = f'{snake}.date >= "{day.isoformat()}" AND {snake}.date < "{nxt.isoformat()}"'
+    try:
+        data = google_get(session, f"/users/me/dataTypes/{data_type}/dataPoints",
+                          params={"filter": filt, "pageSize": 10})
+    except requests.HTTPError as e:
+        log(f"list {data_type} {day} failed: {e}")
+        return None
+    points = data.get("dataPoints") or []
+    if not points:
+        return None
+    # Daily types should have one point per day; take the last.
+    return points[-1].get(camel) or {}
 
 
 def get_daily_value(session, data_type, day):
-    """Daily roll-up for one calendar day (America/Vancouver date)."""
-    start = f"{day.isoformat()}T00:00:00-07:00"
-    end = f"{(day + timedelta(days=1)).isoformat()}T00:00:00-07:00"
-    # Google Health list filter format, per REST reference:
-    # filter=startTime>=<rfc3339> AND endTime<=<rfc3339>
-    filt = f"startTime>={start} AND endTime<={end}"
-    try:
-        data = google_get(session, f"/users/me/dataTypes/{data_type}/dailyRollUp",
-                          params={"filter": filt})
-    except requests.HTTPError as e:
-        log(f"dailyRollUp {data_type} {day} failed: {e}")
+    """Daily list value for one calendar day (America/Vancouver date)."""
+    obj = get_daily_point(session, data_type, day)
+    if not obj:
         return None
-    points = data.get("dataPoints") or data.get("points") or []
-    if not points:
-        return None
-    # Daily roll-up should have one point; take the last.
-    return _first_fp_value(points[-1])
+    _camel, field = DAILY_SPECS[data_type]
+    return _num(obj.get(field))
 
 
 def get_sleep_secs(session, wake_day):
     """Sum sleep seconds for sessions ending on wake_day. Date to wake date."""
-    # Sleep spans the prior night, so query prior day 12:00 to wake day 12:00 PT.
-    start = f"{(wake_day - timedelta(days=1)).isoformat()}T12:00:00-07:00"
-    end = f"{wake_day.isoformat()}T12:00:00-07:00"
-    filt = f"startTime>={start} AND endTime<={end}"
+    nxt = wake_day + timedelta(days=1)
+    filt = (f'sleep.interval.civil_end_time >= "{wake_day.isoformat()}" '
+            f'AND sleep.interval.civil_end_time < "{nxt.isoformat()}"')
     try:
         data = google_get(session, "/users/me/dataTypes/sleep/dataPoints",
-                          params={"filter": filt})
+                          params={"filter": filt, "pageSize": 25})
     except requests.HTTPError as e:
         log(f"sleep {wake_day} failed: {e}")
         return None
     points = data.get("dataPoints") or []
     total = 0.0
     for p in points:
-        s = p.get("startTime")
-        e = p.get("endTime")
+        interval = (p.get("sleep") or {}).get("interval") or {}
+        s = interval.get("startTime")
+        e = interval.get("endTime")
         if not s or not e:
-            continue
-        # Only count sessions ending on wake_day (wake-date rule).
-        if not str(e).startswith(wake_day.isoformat()):
             continue
         try:
             sd = datetime.fromisoformat(s.replace("Z", "+00:00"))
@@ -152,8 +175,32 @@ def get_sleep_secs(session, wake_day):
 
 
 def get_steps(session, day):
-    v = get_daily_value(session, "steps", day)
-    return int(v) if v is not None else None
+    """Sum minute-bucket step counts for one Vancouver day via list.
+    Vancouver is UTC-7, so the day is 07:00Z to next day 07:00Z."""
+    start = f"{day.isoformat()}T07:00:00Z"
+    end = f"{(day + timedelta(days=1)).isoformat()}T07:00:00Z"
+    filt = (f'steps.interval.start_time >= "{start}" '
+            f'AND steps.interval.start_time < "{end}"')
+    total = 0
+    page_token = None
+    try:
+        while True:
+            params = {"filter": filt, "pageSize": 2000}
+            if page_token:
+                params["pageToken"] = page_token
+            data = google_get(session, "/users/me/dataTypes/steps/dataPoints",
+                              params=params)
+            for p in data.get("dataPoints") or []:
+                v = _num((p.get("steps") or {}).get("count"))
+                if v is not None:
+                    total += int(v)
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+    except requests.HTTPError as e:
+        log(f"steps {day} failed: {e}")
+        return None
+    return total if total > 0 else None
 
 
 def build_payload_for_day(session, day, mock=False):
@@ -167,13 +214,15 @@ def build_payload_for_day(session, day, mock=False):
     rhr = get_daily_value(session, "daily-resting-heart-rate", day)
     if rhr is not None:
         payload["restingHR"] = int(round(rhr))
-    hrv = get_daily_value(session, "daily-heart-rate-variability", day)
-    if hrv is not None:
-        payload["hrv"] = float(hrv)  # RMSSD ms. Do NOT mix with Apple SDNN.
-    # Note: DailyHeartRateVariability in some responses also carries a
-    # second value for NREM restoration / avg sleeping HR. If your
-    # response shows it, map it here. Current code keeps hrv only
-    # unless a second value is present in the raw point; see PLAN.md.
+    hrv_obj = get_daily_point(session, "daily-heart-rate-variability", day)
+    if hrv_obj:
+        hrv = _num(hrv_obj.get("averageHeartRateVariabilityMilliseconds"))
+        if hrv is not None:
+            payload["hrv"] = float(hrv)  # RMSSD ms. Do NOT mix with Apple SDNN.
+        # Second value in the same point, if Google returns it.
+        non_rem = _num(hrv_obj.get("nonRemHeartRateBeatsPerMinute"))
+        if non_rem is not None:
+            payload["avgSleepingHR"] = int(round(non_rem))
     spo2 = get_daily_value(session, "daily-oxygen-saturation", day)
     if spo2 is not None:
         payload["spO2"] = float(spo2)
@@ -181,8 +230,6 @@ def build_payload_for_day(session, day, mock=False):
     if resp is not None:
         payload["respiration"] = float(resp)
     vo2 = get_daily_value(session, "daily-vo2-max", day)
-    if vo2 is None:
-        vo2 = get_daily_value(session, "vo2-max", day)
     if vo2 is not None:
         payload["vo2max"] = float(vo2)
     sleep_secs = get_sleep_secs(session, day)
