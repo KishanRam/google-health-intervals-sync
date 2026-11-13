@@ -1,0 +1,49 @@
+name: Google Health to Intervals sync
+
+# Runs 07:00 and 19:00 America/Vancouver (PCT, UTC-7 year-round since Nov 2026).
+# 07:00 PCT = 14:00 UTC, 19:00 PCT = 02:00 UTC next day.
+# Cron is UTC. Twice daily, last 2 finalized days, so a missed run backfills.
+on:
+  schedule:
+    - cron: "0 14,2 * * *"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Single date YYYY-MM-DD to sync (optional, else last 2 days)"
+        required: false
+        default: ""
+      dry_run:
+        description: "true to print payload without writing to Intervals"
+        required: false
+        default: "false"
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Sync wellness
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          INTERVALS_API_KEY: ${{ secrets.INTERVALS_API_KEY }}
+          INTERVALS_ATHLETE_ID: "0"
+          DAYS_BACK: "2"
+        run: |
+          if [ -n "${{ inputs.date }}" ]; then
+            ARGS="--date ${{ inputs.date }}"
+          else
+            ARGS=""
+          fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          python sync.py $ARGS
