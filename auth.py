@@ -41,7 +41,7 @@ def load_env():
             if not line or line.startswith("#") or "=" not in line:
                 continue
             k, v = line.split("=", 1)
-            os.environ.setdefault(k.strip(), v.strip().strip(chr(34)).strip(chr(39)))
+            os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 def main():
     load_env()
@@ -73,7 +73,7 @@ def main():
     r.raise_for_status()
     data = r.json()
     print("\n--- SAVE THIS IN GITHUB SECRETS, DO NOT COMMIT OR SHARE ---")
-    print(f"GOOGLE_REFRESH_TOKEN={data[chr(39)+chr(114)+chr(101)+chr(102)+chr(114)+chr(101)+chr(115)+chr(104)+chr(95)+chr(116)+chr(111)+chr(107)+chr(101)+chr(110)+chr(39)]}")
+    print(f"GOOGLE_REFRESH_TOKEN={data['refresh_token']}")
     print("---")
     print("Access token (1h, for testing only):", data.get("access_token", "")[:20] + "...")
 
