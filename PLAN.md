@@ -37,15 +37,15 @@ Build a minimal Python bridge, run it on GitHub Actions twice daily, free. It re
 Fitbit Air (overnight)
   -> Google Health app (iPhone)
   -> Google Health API v4 (cloud, OAuth2 refresh token)
-  -> sync.py on GitHub Actions (ubuntu-latest, 07:00 + 19:00 PCT)
+  -> sync.py on GitHub Actions (ubuntu-latest, 10:00 + 19:00 PCT)
   -> Intervals.icu API PUT /athlete/0/wellness/{date}
   -> Intervals.icu wellness: hrv, restingHR, sleepSecs, spO2, respiration, vo2max, steps
 Wahoo -> Intervals.icu (unchanged, activities only)
 Intervals Companion -> Intervals.icu (unchanged, Apple Health wellness it already has)
 ```
 
-Schedule: cron `0 14,2 * * *` UTC = 14:00 UTC (07:00 PCT) and 02:00 UTC (19:00 PCT prior day). Vancouver is UTC-7 year-round, no fall back Nov 1, 2026.
-Sync window: last 2 finalized days (yesterday + day before). Today is not final. A missed run backfills on the next run, up to 14 days if needed by manual dispatch with a date.
+Schedule: cron `0 17,2 * * *` UTC = 17:00 UTC (10:00 PCT) and 02:00 UTC (19:00 PCT prior day). Vancouver is UTC-7 year-round, no fall back Nov 1, 2026. Changed Nov 14, 2026 from 07:00 to 10:00 PCT at Kishan's request, so the morning run picks up last night's sleep/HRV the same day.
+Sync window: today plus last 2 days (Vancouver date, not UTC). Today is partial until the day ends; later runs overwrite it. Daily fields are available intraday once sleep ends, verified Nov 14, 2026. A missed run backfills on the next run, up to 14 days if needed by manual dispatch with a date.
 Logging: log dates + field names + success/failure only. Never log token values or full health values in Actions logs beyond the payload already shown in dry-run mode. Keep logs minimal in production.
 
 ## 4. Field mapping (do not change without checking PLAN §1)
@@ -152,7 +152,7 @@ If the repo does not exist yet, create it via the GitHub connector:
 | Google 404 on dataType | API version / dataType name drift | Check discovery doc `https://health.googleapis.com/$discovery/rest?version=v4`, update name in `sync.py`, test with `--dry-run`. |
 | Intervals 401 | Wrong API key or Basic format | Verify `API_KEY:<key>` base64, regenerate key in Intervals, update secret. |
 | Intervals 400 | Bad field value (e.g. hrv as SDNN, sleepSecs as minutes) | Check units in §4, fix mapping, re-run for that date only. |
-| No data for a day | Fitbit not worn / not synced to Google Health yet | Skip, do not blank. Next run backfills last 2 days. |
+| No data for a day | Fitbit not worn / not synced to Google Health yet | Skip, do not blank. Next run backfills today plus last 2 days. |
 | Actions minutes exceeded | Unlikely at ~60 min/mo | Check Actions usage, reduce to once daily if needed. |
 
 Fallback if custom bridge proves too fragile: Health Sync by appyhapps, iOS, source Google Health, destination Intervals.icu, wellness only, workouts off, paid after 1-week trial. That app is verified and has no weekly reauth. Do not switch without Kishan saying so.
