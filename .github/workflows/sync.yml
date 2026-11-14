@@ -1,15 +1,15 @@
 name: Google Health to Intervals sync
 
-# Runs 07:00 and 19:00 America/Vancouver (PCT, UTC-7 year-round since Nov 2026).
-# 07:00 PCT = 14:00 UTC, 19:00 PCT = 02:00 UTC next day.
-# Cron is UTC. Twice daily, last 2 finalized days, so a missed run backfills.
+# Runs 10:00 and 19:00 America/Vancouver (PCT, UTC-7 year-round since Nov 2026).
+# 10:00 PCT = 17:00 UTC, 19:00 PCT = 02:00 UTC next day.
+# Cron is UTC. Twice daily, today plus last 2 days, so a missed run backfills
 on:
   schedule:
-    - cron: "0 14,2 * * *"
+    - cron: "0 17,2 * * *"
   workflow_dispatch:
     inputs:
       date:
-        description: "Single date YYYY-MM-DD to sync (optional, else last 2 days)"
+        description: "Single date YYYY-MM-DD to sync (optional, else today plus last 2 days)"
         required: false
         default: ""
       dry_run:
