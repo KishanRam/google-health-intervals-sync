@@ -25,7 +25,7 @@ Wahoo stays the authoritative activity source. Intervals Companion is no longer 
 2. Intervals.icu > Settings > Developer > create API key.
 3. Create a private GitHub repo, push this folder, add Secrets: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `INTERVALS_API_KEY`.
 4. Run the Action manually once with dry-run, check logs, then run for real for yesterday. Verify in Intervals.icu wellness for that date.
-5. Leave the schedule on. It runs 07:00 and 19:00 Vancouver time.
+5. Leave the schedule on. It runs 10:00 and 19:00 Vancouver time, syncing today plus the last 2 days.
 
 ## Local test (no keys)
 
