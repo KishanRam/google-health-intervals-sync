@@ -49,7 +49,14 @@ Auth:
 Env vars (never commit real values; use GitHub Actions Secrets):
   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN
   INTERVALS_API_KEY, INTERVALS_ATHLETE_ID (default "0")
-  DAYS_BACK (default "2") - sync last N finalized days, default 2
+  DAYS_BACK (default "2") - sync today plus last N days, default today + 2.
+  Today is the Vancouver date, not UTC, so the 10:00 PCT run syncs
+  this morning's sleep/HRV and the 19:00 PCT run syncs the fuller day.
+  Daily fields are available intraday once sleep ends (verified Nov 14,
+  2026: restingHR, HRV, avgSleepingHR, SpO2, respiration, sleepSecs
+  all present at 13:00 PST); steps and weight are partial until the
+  day ends and are overwritten by later runs. Intervals PUT only
+  changes fields provided, so partial payloads are safe.
 
 Usage:
   python sync.py [--date YYYY-MM-DD] [--dry-run] [--mock]
@@ -66,6 +73,7 @@ import json
 import os
 import sys
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -298,9 +306,13 @@ def main():
     if args.date:
         days = [date.fromisoformat(args.date)]
     else:
-        today = date.today()
-        # Last N finalized days: yesterday and day before. Today is not final.
-        days = [today - timedelta(days=i) for i in range(1, args.days_back + 1)]
+        # Vancouver date, not UTC: at 19:00 PCT the UTC date is already
+        # tomorrow, so date.today() would sync the wrong days.
+        today = datetime.now(ZoneInfo("America/Vancouver")).date()
+        # Today plus last N days. Today is partial until the day ends;
+        # later runs overwrite it with fuller data. A day with no data
+        # at all is skipped, never blanked in Intervals.
+        days = [today - timedelta(days=i) for i in range(0, args.days_back + 1)]
         days.reverse()
 
     session = None
